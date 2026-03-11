@@ -1,0 +1,274 @@
+# MonoOS — Full Operating System Implementation Plan
+
+> **Goal**: Build a custom x86 operating system from scratch in C and x86 Assembly, featuring its own kernel, package manager, and desktop environment — capable of being daily-driven.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **This is a massive multi-phase project.** I'll implement it incrementally, starting with Phase 1 (bootable kernel). Each phase builds on the previous one and produces a testable artifact (ISO image).
+
+> [!WARNING]
+> **Cross-compiler required.** We need an `i686-elf-gcc` cross-compiler toolchain to build for bare-metal x86. I'll provide build instructions, but you'll need to either:
+> - Install WSL2 with the toolchain, **or**
+> - Use a Docker container with the toolchain pre-installed
+> 
+> You'll also need **QEMU** to test-run the OS in a virtual machine.
+
+> [!CAUTION]
+> **Daily-driving an OS built from scratch** requires years of work for full hardware support. My plan gets you to a working graphical OS with core functionality. True daily-driving (web browsing, media, etc.) is a long-term evolution beyond the initial build.
+
+---
+
+## Architecture Overview
+
+```
+┌──────────────────────────────────────────┐
+│            Oki (Desktop Env)             │
+│  ┌──────┐ ┌──────┐ ┌────────┐ ┌──────┐  │
+│  │ Term │ │ Files│ │Launcher│ │ Apps │  │
+│  └──────┘ └──────┘ └────────┘ └──────┘  │
+├──────────────────────────────────────────┤
+│         Widget Toolkit (okiui)           │
+├──────────────────────────────────────────┤
+│      Window Manager / Compositor         │
+├──────────────────────────────────────────┤
+│   aswinpkgs (Package Manager - userland) │
+├──────────────────────────────────────────┤
+│              libc subset                 │
+├──────────────────────────────────────────┤
+│          System Call Interface           │
+├──────────────────────────────────────────┤
+│            Dori Kernel                   │
+│  ┌─────┐ ┌─────┐ ┌─────┐ ┌───────────┐ │
+│  │ MMU │ │Sched│ │ VFS │ │  Drivers  │ │
+│  └─────┘ └─────┘ └─────┘ └───────────┘ │
+├──────────────────────────────────────────┤
+│        GRUB2 Multiboot Bootloader        │
+├──────────────────────────────────────────┤
+│             x86 Hardware                 │
+└──────────────────────────────────────────┘
+```
+
+---
+
+## Proposed Changes — Phase 1: Bootable Kernel
+
+We start here. This phase produces a bootable ISO that enters the Dori kernel shell.
+
+### Project Structure
+
+#### [NEW] [Makefile](file:///c:/Users/Asus/Desktop/MonoOs/Makefile)
+- Master build system: cross-compile all [.c](file:///c:/Users/Asus/Desktop/MonoOs/main.c) and `.asm` files
+- Link with custom `linker.ld`
+- Generate `monoos.iso` via `grub-mkrescue`
+- Targets: `all`, `clean`, `run` (launches QEMU)
+
+#### [NEW] [linker.ld](file:///c:/Users/Asus/Desktop/MonoOs/linker.ld)
+- Dori kernel linker script: places `.text` at `0x100000` (1 MiB), followed by `.rodata`, `.data`, `.bss`
+- Exports `_kernel_start`, `_kernel_end` symbols for memory manager
+
+---
+
+### Boot Layer
+
+#### [NEW] [boot/multiboot.asm](file:///c:/Users/Asus/Desktop/MonoOs/boot/multiboot.asm)
+- Multiboot2 header (magic, flags, checksum)
+- Sets up initial stack (16 KiB)
+- Calls `kernel_main()` in C
+- Halts CPU on return
+
+#### [NEW] [boot/gdt.asm](file:///c:/Users/Asus/Desktop/MonoOs/boot/gdt.asm)
+- Global Descriptor Table flush routine (`gdt_flush`)
+
+#### [NEW] [boot/idt.asm](file:///c:/Users/Asus/Desktop/MonoOs/boot/idt.asm)
+- IDT load routine + ISR/IRQ stubs (0–47)
+- Common interrupt handler that pushes state and calls C handler
+
+---
+
+### Kernel Core
+
+#### [NEW] [kernel/kernel.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/kernel.c)
+- `kernel_main()` — Dori kernel entry point
+- Initializes GDT → IDT → PIC → PIT → keyboard → terminal
+- Drops into Dori shell loop
+
+#### [NEW] [kernel/gdt.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/gdt.c)
+- GDT entries: null, kernel code, kernel data, user code, user data, TSS
+- `gdt_init()` function
+
+#### [NEW] [kernel/idt.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/idt.c)
+- 256-entry IDT
+- ISR handlers for exceptions (0–31)
+- IRQ routing (32–47)
+
+#### [NEW] [kernel/pic.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/pic.c)
+- 8259 PIC initialization (remap IRQs to 32–47)
+- `pic_send_eoi()`
+
+#### [NEW] [kernel/pit.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/pit.c)
+- Programmable Interval Timer at 1000 Hz
+- Global tick counter for scheduling
+
+---
+
+### Memory Management
+
+#### [NEW] [kernel/pmm.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/pmm.c)
+- Physical memory manager using bitmap allocator
+- Reads multiboot memory map
+- `pmm_alloc_frame()` / `pmm_free_frame()`
+
+#### [NEW] [kernel/vmm.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/vmm.c)
+- Virtual memory manager — page directory / page table management
+- Identity-map first 4 MiB, map kernel higher
+- `vmm_map_page()` / `vmm_unmap_page()`
+
+#### [NEW] [kernel/heap.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/heap.c)
+- Kernel heap: linked-list first-fit allocator
+- `kmalloc()`, `kfree()`, `kmalloc_aligned()`
+
+---
+
+### Drivers
+
+#### [NEW] [drivers/vga.c](file:///c:/Users/Asus/Desktop/MonoOs/drivers/vga.c)
+- VGA text-mode driver (80×25, color)
+- `vga_putchar()`, `vga_puts()`, `vga_clear()`, `vga_set_color()`
+- Scrolling support
+
+#### [NEW] [drivers/keyboard.c](file:///c:/Users/Asus/Desktop/MonoOs/drivers/keyboard.c)
+- PS/2 keyboard driver (IRQ1)
+- Scancode set 1 → ASCII translation
+- Circular input buffer
+
+#### [NEW] [drivers/serial.c](file:///c:/Users/Asus/Desktop/MonoOs/drivers/serial.c)
+- COM1 serial output for debug logging
+
+---
+
+### Kernel Shell
+
+#### [NEW] [kernel/kshell.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel/kshell.c)
+- **Dori Shell (dsh)** — command-line shell running in kernel mode
+- Built-in commands: `help`, `clear`, `meminfo`, `reboot`, `halt`, `echo`, `ver`
+- Command parser and dispatcher
+
+---
+
+### Headers
+
+#### [NEW] [include/](file:///c:/Users/Asus/Desktop/MonoOs/include/)
+- Header files for all modules:
+  - `kernel.h`, `gdt.h`, `idt.h`, `isr.h`, `pic.h`, `pit.h`
+  - `pmm.h`, `vmm.h`, `heap.h`
+  - `vga.h`, `keyboard.h`, `serial.h`
+  - `kshell.h`
+  - `types.h` (uint8_t, uint32_t, size_t, etc.)
+  - `string.h` (memset, memcpy, strlen, strcmp)
+  - `io.h` (inb, outb, inw, outw port I/O)
+
+#### [NEW] [lib/string.c](file:///c:/Users/Asus/Desktop/MonoOs/lib/string.c)
+- Freestanding string/memory utilities: `memset`, `memcpy`, `memmove`, `strlen`, `strcmp`, `strncmp`, `strcpy`, `itoa`
+
+---
+
+### GRUB Config
+
+#### [NEW] [iso/boot/grub/grub.cfg](file:///c:/Users/Asus/Desktop/MonoOs/iso/boot/grub/grub.cfg)
+- GRUB menu entry: "MonoOS v0.1 — Dori Kernel"
+- `multiboot2 /boot/dori.kernel`
+
+---
+
+### Cleanup
+
+#### [DELETE] [kernel.c](file:///c:/Users/Asus/Desktop/MonoOs/kernel.c)
+#### [DELETE] [main.c](file:///c:/Users/Asus/Desktop/MonoOs/main.c)
+#### [DELETE] [memory.c](file:///c:/Users/Asus/Desktop/MonoOs/memory.c)
+- Remove placeholder files — all code moves to proper directories.
+
+---
+
+## Directory Structure (after Phase 1)
+
+```
+MonoOs/
+├── Makefile
+├── linker.ld
+├── boot/
+│   ├── multiboot.asm
+│   ├── gdt.asm
+│   └── idt.asm
+├── kernel/
+│   ├── kernel.c
+│   ├── gdt.c
+│   ├── idt.c
+│   ├── pic.c
+│   ├── pit.c
+│   ├── pmm.c
+│   ├── vmm.c
+│   ├── heap.c
+│   └── kshell.c
+├── drivers/
+│   ├── vga.c
+│   ├── keyboard.c
+│   └── serial.c
+├── lib/
+│   └── string.c
+├── include/
+│   ├── types.h
+│   ├── io.h
+│   ├── string.h
+│   ├── kernel.h
+│   ├── gdt.h
+│   ├── idt.h
+│   ├── isr.h
+│   ├── pic.h
+│   ├── pit.h
+│   ├── pmm.h
+│   ├── vmm.h
+│   ├── heap.h
+│   ├── vga.h
+│   ├── keyboard.h
+│   ├── serial.h
+│   └── kshell.h
+└── iso/
+    └── boot/
+        └── grub/
+            └── grub.cfg
+```
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. **Build verification**: Run `make clean && make all` — must compile with zero errors and zero warnings (`-Wall -Wextra -Werror`)
+2. **ISO generation**: Verify `monoos.iso` (containing Dori kernel) is created and is a valid ISO9660 image
+3. **QEMU boot test**: Run `qemu-system-i386 -cdrom monoos.iso -serial stdio` and verify:
+   - GRUB menu appears with "MonoOS v0.1 — Dori Kernel"
+   - Dori prints boot banner
+   - Memory info is displayed
+   - Dori shell prompt (`dori> `) appears
+   - Typing characters echoes to screen
+   - `help` command lists available commands
+   - `meminfo` shows physical/virtual memory stats
+   - `reboot` restarts the VM
+
+### Manual Verification
+> [!NOTE]
+> Since this is bare-metal OS code, automated unit testing is impractical without a testing harness. Verification is done by booting in QEMU.
+
+1. **Boot the ISO in QEMU** with `make run`
+2. **Interact with the kernel shell** — type commands and confirm output
+3. **Check serial log** — debug output appears on host terminal via `-serial stdio`
+4. **Stress test**: Rapidly type to confirm keyboard buffer handles input without dropping characters
+
+---
+
+## Future Phases (not implemented now)
+- **Phase 2**: Process scheduler, syscalls, DoriFS filesystem, ELF loader
+- **Phase 3**: `aswinpkgs` package manager
+- **Phase 4**: Oki desktop environment — VESA framebuffer, window manager, desktop apps
+- **Phase 5**: Networking, ported applications, audio
