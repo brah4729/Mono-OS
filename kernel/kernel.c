@@ -21,11 +21,11 @@
 static void print_banner(void) {
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("\n");
-    vga_puts("  __  __                   ___  ____  \n");
-    vga_puts(" |  \\/  | ___  _ __   ___ / _ \\/ ___| \n");
-    vga_puts(" | |\\/| |/ _ \\| '_ \\ / _ \\ | | \\___ \\ \n");
-    vga_puts(" | |  | | (_) | | | | (_) | |_| |___) |\n");
-    vga_puts(" |_|  |_|\\___/|_| |_|\\___/ \\___/|____/ \n");
+    vga_puts("  __   __                           ___     ____      \n");
+    vga_puts(" |  \\/  |   ___    _ __    ___   / _  \\  / ___|    \n");
+    vga_puts(" | |\\/| | / _ \\ | '_ \\ / _ \\ | |  \\ | \\ __    \n");
+    vga_puts(" | |   | || (_) | | | | | | (_)  | |__ |_|  ____\\  \n");
+    vga_puts(" |_|   |_| \\___/ |_| |_| \\___/ \\___ //  |____//    \n");
     vga_puts("\n");
 
     vga_set_color(VGA_YELLOW, VGA_BLACK);
