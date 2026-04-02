@@ -45,4 +45,7 @@ extern void irq10(void); extern void irq11(void);
 extern void irq12(void); extern void irq13(void);
 extern void irq14(void); extern void irq15(void);
 
+/* System call stub (int 0x80) */
+extern void isr128(void);
+
 #endif

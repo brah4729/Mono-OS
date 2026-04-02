@@ -15,6 +15,12 @@
 #include "../include/kshell.h"
 #include "../include/io.h"
 #include "../include/string.h"
+#include "../include/ata.h"
+#include "../include/vfs.h"
+#include "../include/dorifs.h"
+#include "../include/syscall.h"
+#include "../include/process.h"
+#include "../include/elf.h"
 
 #define MULTIBOOT2_MAGIC_CHECK 0x36D76289
 
@@ -127,6 +133,56 @@ void kernel_main(uint32_t magic, uint32_t mboot_info_addr) {
     /* Initialize keyboard */
     keyboard_init();
     vga_puts("  [OK] PS/2 keyboard\n");
+
+    /* Initialize ATA disk driver */
+    ata_init();
+    if (ata_is_present()) {
+        ata_drive_t drive = ata_get_drive_info();
+        vga_puts("  [OK] ATA disk: ");
+        vga_puts(drive.model);
+        vga_puts(" (");
+        vga_put_dec(drive.size_mb);
+        vga_puts(" MB)\n");
+    } else {
+        vga_puts("  [--] No ATA disk detected\n");
+    }
+
+    /* Initialize VFS */
+    vfs_init();
+    vga_puts("  [OK] Virtual filesystem\n");
+
+    /* Mount DoriFS if disk is present */
+    if (ata_is_present()) {
+        /* Try to mount existing DoriFS at LBA 0 */
+        vfs_node_t* root = dorifs_mount(0);
+        if (!root) {
+            /* No valid DoriFS — format the disk */
+            vga_puts("  [..] Formatting disk as DoriFS...\n");
+            ata_drive_t drive = ata_get_drive_info();
+            dorifs_format(0, drive.size_sectors);
+            root = dorifs_mount(0);
+        }
+        if (root) {
+            vfs_mount("/", root);
+            vga_puts("  [OK] DoriFS mounted at /\n");
+
+            /* Create /nix/store directory structure */
+            vfs_mkdir("/nix");
+            vfs_mkdir("/nix/store");
+            vfs_mkdir("/nix/var");
+            vfs_mkdir("/nix/var/nix");
+            vfs_mkdir("/nix/var/nix/profiles");
+            vga_puts("  [OK] /nix/store directory created\n");
+        }
+    }
+
+    /* Initialize system calls */
+    syscall_init();
+    vga_puts("  [OK] System calls (int 0x80)\n");
+
+    /* Initialize process manager */
+    process_init();
+    vga_puts("  [OK] Process manager\n");
 
     /* Enable interrupts */
     sti();

@@ -92,6 +92,10 @@ IRQ 14, 46
 IRQ 15, 47
 
 ; ---------------------------------------------------------------
+; System call stub (int 0x80)
+ISR_NOERR 128
+
+; ---------------------------------------------------------------
 ; Common ISR stub — saves state, calls C handler, restores state
 isr_common_stub:
     pusha                  ; Push edi, esi, ebp, esp, ebx, edx, ecx, eax

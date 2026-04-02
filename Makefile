@@ -15,11 +15,14 @@ ASFLAGS = -f elf32
 LDFLAGS = -T linker.ld -nostdlib
 
 # Source files
-ASM_SOURCES = boot/multiboot.asm boot/gdt.asm boot/idt.asm
+ASM_SOURCES = boot/multiboot.asm boot/gdt.asm boot/idt.asm \
+              boot/context_switch.asm
 C_SOURCES   = kernel/kernel.c kernel/gdt.c kernel/idt.c kernel/pic.c \
               kernel/pit.c kernel/pmm.c kernel/vmm.c kernel/heap.c \
-              kernel/kshell.c \
+              kernel/kshell.c kernel/vfs.c kernel/dorifs.c \
+              kernel/syscall.c kernel/process.c kernel/elf.c \
               drivers/vga.c drivers/keyboard.c drivers/serial.c \
+              drivers/ata.c \
               lib/string.c
 
 # Object files
@@ -30,10 +33,11 @@ OBJECTS     = $(ASM_OBJECTS) $(C_OBJECTS)
 # Output
 KERNEL  = dori.kernel
 ISO     = monoos.iso
+DISKIMG = monoos-disk.img
 
 # ─── Targets ───────────────────────────────────────────────
 
-.PHONY: all clean run iso
+.PHONY: all clean run iso disk
 
 all: $(ISO)
 
@@ -58,13 +62,32 @@ $(KERNEL): $(OBJECTS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-run: $(ISO)
+# Create a 64 MB disk image for QEMU
+disk: $(DISKIMG)
+
+$(DISKIMG):
+	dd if=/dev/zero of=$(DISKIMG) bs=1M count=64 2>/dev/null
+	@echo "Created $(DISKIMG) (64 MB)"
+
+# Run with disk attached
+run: $(ISO) $(DISKIMG)
+	qemu-system-i386 -cdrom $(ISO) -serial stdio -m 128M \
+		-drive file=$(DISKIMG),format=raw,if=ide
+
+# Run without disk (CD-ROM only)
+run-nodisk: $(ISO)
 	qemu-system-i386 -cdrom $(ISO) -serial stdio -m 128M
 
-debug: $(ISO)
-	qemu-system-i386 -cdrom $(ISO) -serial stdio -m 128M -s -S
+debug: $(ISO) $(DISKIMG)
+	qemu-system-i386 -cdrom $(ISO) -serial stdio -m 128M \
+		-drive file=$(DISKIMG),format=raw,if=ide -s -S
 
 clean:
 	rm -f $(OBJECTS) $(KERNEL) $(ISO)
 	rm -f iso/boot/$(KERNEL)
 	@echo "Cleaned."
+
+cleanall: clean
+	rm -f $(DISKIMG)
+	@echo "Cleaned everything (including disk image)."
+

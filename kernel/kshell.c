@@ -9,6 +9,10 @@
 #include "../include/serial.h"
 #include "../include/io.h"
 #include "../include/kernel.h"
+#include "../include/vfs.h"
+#include "../include/dorifs.h"
+#include "../include/ata.h"
+#include "../include/process.h"
 
 #define CMD_BUFFER_SIZE 256
 
@@ -27,14 +31,25 @@ static void cmd_help(void) {
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("Dori Shell (dsh) - Available Commands:\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-    vga_puts("  help     - Show this help message\n");
-    vga_puts("  clear    - Clear the screen\n");
-    vga_puts("  meminfo  - Display memory information\n");
-    vga_puts("  ver      - Show kernel version\n");
-    vga_puts("  echo     - Echo text to screen\n");
-    vga_puts("  uptime   - Show system uptime\n");
-    vga_puts("  reboot   - Restart the system\n");
-    vga_puts("  halt     - Shut down the system\n");
+    vga_puts("  help      - Show this help message\n");
+    vga_puts("  clear     - Clear the screen\n");
+    vga_puts("  meminfo   - Display memory information\n");
+    vga_puts("  ver       - Show kernel version\n");
+    vga_puts("  echo      - Echo text to screen\n");
+    vga_puts("  uptime    - Show system uptime\n");
+    vga_puts("  reboot    - Restart the system\n");
+    vga_puts("  halt      - Shut down the system\n");
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("Filesystem:\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    vga_puts("  ls [path] - List directory contents\n");
+    vga_puts("  cat file  - Display file contents\n");
+    vga_puts("  touch f   - Create an empty file\n");
+    vga_puts("  write f d - Write data to a file\n");
+    vga_puts("  mkdir dir - Create a directory\n");
+    vga_puts("  rm file   - Remove a file\n");
+    vga_puts("  diskinfo  - Show disk information\n");
+    vga_puts("  fsinfo    - Show filesystem information\n");
 }
 
 static void cmd_meminfo(void) {
@@ -113,6 +128,197 @@ static void cmd_halt(void) {
     for (;;) hlt();
 }
 
+/* ─── Filesystem commands ───────────────────────────────── */
+
+static void cmd_ls(const char* path) {
+    if (!path || !*path) path = "/";
+
+    vfs_dirent_t entry;
+    uint32_t index = 0;
+
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("  Contents of ");
+    vga_puts(path);
+    vga_puts(":\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    while (vfs_readdir(path, index, &entry) == 0) {
+        vga_puts("  ");
+        if (entry.type == 2) {  /* directory */
+            vga_set_color(VGA_LIGHT_BLUE, VGA_BLACK);
+            vga_puts("[DIR] ");
+        } else if (entry.type == 3) {  /* symlink */
+            vga_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
+            vga_puts("[LNK] ");
+        } else {
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+            vga_puts("      ");
+        }
+        vga_puts(entry.name);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        vga_puts("\n");
+        index++;
+    }
+
+    if (index == 0) {
+        vga_puts("  (empty)\n");
+    }
+}
+
+static void cmd_cat(const char* path) {
+    if (!path || !*path) {
+        vga_puts("Usage: cat <file>\n");
+        return;
+    }
+
+    int fd = vfs_open(path, VFS_O_RDONLY);
+    if (fd < 0) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        vga_puts("Cannot open: ");
+        vga_puts(path);
+        vga_puts("\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    uint8_t buf[256];
+    ssize_t n;
+    while ((n = vfs_read(fd, buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        vga_puts((const char*)buf);
+    }
+    vga_puts("\n");
+    vfs_close(fd);
+}
+
+static void cmd_touch(const char* path) {
+    if (!path || !*path) {
+        vga_puts("Usage: touch <file>\n");
+        return;
+    }
+
+    int fd = vfs_open(path, VFS_O_CREAT | VFS_O_WRONLY);
+    if (fd < 0) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        vga_puts("Cannot create: ");
+        vga_puts(path);
+        vga_puts("\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    vfs_close(fd);
+    vga_puts("Created: ");
+    vga_puts(path);
+    vga_puts("\n");
+}
+
+static void cmd_write_file(const char* args) {
+    if (!args || !*args) {
+        vga_puts("Usage: write <file> <data>\n");
+        return;
+    }
+
+    /* Parse: first word is filename, rest is data */
+    char filepath[VFS_MAX_PATH];
+    int i = 0;
+    while (args[i] && args[i] != ' ' && i < VFS_MAX_PATH - 1) {
+        filepath[i] = args[i];
+        i++;
+    }
+    filepath[i] = '\0';
+
+    const char* data = &args[i];
+    while (*data == ' ') data++;
+
+    if (!*data) {
+        vga_puts("Usage: write <file> <data>\n");
+        return;
+    }
+
+    int fd = vfs_open(filepath, VFS_O_CREAT | VFS_O_WRONLY | VFS_O_TRUNC);
+    if (fd < 0) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        vga_puts("Cannot open for writing: ");
+        vga_puts(filepath);
+        vga_puts("\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    ssize_t written = vfs_write(fd, data, strlen(data));
+    vfs_close(fd);
+
+    vga_puts("Wrote ");
+    vga_put_dec((uint32_t)written);
+    vga_puts(" bytes to ");
+    vga_puts(filepath);
+    vga_puts("\n");
+}
+
+static void cmd_mkdir_path(const char* path) {
+    if (!path || !*path) {
+        vga_puts("Usage: mkdir <directory>\n");
+        return;
+    }
+
+    if (vfs_mkdir(path) == 0) {
+        vga_puts("Created directory: ");
+        vga_puts(path);
+        vga_puts("\n");
+    } else {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        vga_puts("Failed to create: ");
+        vga_puts(path);
+        vga_puts("\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+}
+
+static void cmd_rm(const char* path) {
+    if (!path || !*path) {
+        vga_puts("Usage: rm <file>\n");
+        return;
+    }
+
+    if (vfs_unlink(path) == 0) {
+        vga_puts("Removed: ");
+        vga_puts(path);
+        vga_puts("\n");
+    } else {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        vga_puts("Failed to remove: ");
+        vga_puts(path);
+        vga_puts("\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+}
+
+static void cmd_diskinfo(void) {
+    if (!ata_is_present()) {
+        vga_puts("  No disk detected\n");
+        return;
+    }
+    ata_drive_t drive = ata_get_drive_info();
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("Disk Information:\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    vga_puts("  Model:    ");
+    vga_puts(drive.model);
+    vga_puts("\n");
+    vga_puts("  Sectors:  ");
+    vga_put_dec(drive.size_sectors);
+    vga_puts("\n");
+    vga_puts("  Size:     ");
+    vga_put_dec(drive.size_mb);
+    vga_puts(" MB\n");
+}
+
+static void cmd_fsinfo(void) {
+    dorifs_print_info();
+}
+
+/* ─── Command dispatcher ───────────────────────────────── */
+
 static void execute_command(const char* cmd) {
     /* Skip leading whitespace */
     while (*cmd == ' ') cmd++;
@@ -141,6 +347,25 @@ static void execute_command(const char* cmd) {
         cmd_reboot();
     } else if (strcmp(cmd, "halt") == 0) {
         cmd_halt();
+    /* Filesystem commands */
+    } else if (strcmp(cmd, "ls") == 0) {
+        cmd_ls("/");
+    } else if (strncmp(cmd, "ls ", 3) == 0) {
+        cmd_ls(cmd + 3);
+    } else if (strncmp(cmd, "cat ", 4) == 0) {
+        cmd_cat(cmd + 4);
+    } else if (strncmp(cmd, "touch ", 6) == 0) {
+        cmd_touch(cmd + 6);
+    } else if (strncmp(cmd, "write ", 6) == 0) {
+        cmd_write_file(cmd + 6);
+    } else if (strncmp(cmd, "mkdir ", 6) == 0) {
+        cmd_mkdir_path(cmd + 6);
+    } else if (strncmp(cmd, "rm ", 3) == 0) {
+        cmd_rm(cmd + 3);
+    } else if (strcmp(cmd, "diskinfo") == 0) {
+        cmd_diskinfo();
+    } else if (strcmp(cmd, "fsinfo") == 0) {
+        cmd_fsinfo();
     } else {
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
         vga_puts("Unknown command: ");

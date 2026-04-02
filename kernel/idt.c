@@ -146,5 +146,8 @@ void idt_init(void) {
     idt_set_gate(46, (uint32_t)irq14, 0x08, 0x8E);
     idt_set_gate(47, (uint32_t)irq15, 0x08, 0x8E);
 
+    /* System call gate (int 0x80) — DPL=3 so userspace can call it */
+    idt_set_gate(128, (uint32_t)isr128, 0x08, 0xEE);
+
     idt_flush((uint32_t)&idtp);
 }
