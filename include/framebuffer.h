@@ -50,6 +50,10 @@ typedef uint32_t color_t;
 #define COLOR_TITLEBAR        0xFF1E1E2E
 #define COLOR_PANEL           0xE0181825  /* Semi-transparent panel */
 
+/* Externally accessible globals (for compositor use) */
+extern uint32_t* backbuffer;
+extern const uint8_t font_8x16[95][16];
+
 /* Framebuffer API */
 void        fb_init_from_multiboot(uint32_t mb_info_addr);
 bool        fb_is_available(void);

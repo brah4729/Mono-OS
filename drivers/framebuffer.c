@@ -8,11 +8,11 @@
 #include "../include/vmm.h"
 
 static framebuffer_info_t fb_info;
-static uint32_t* backbuffer = NULL;
+uint32_t* backbuffer = NULL;
 
 /* ─── Embedded 8x16 bitmap font (CP437 subset, printable ASCII 32-126) ─── */
 
-static const uint8_t font_8x16[95][16] = {
+const uint8_t font_8x16[95][16] = {
     /* 32: Space */
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
     /* 33: ! */

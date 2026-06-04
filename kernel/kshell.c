@@ -33,6 +33,7 @@ static void cmd_help(void) {
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     vga_puts("  help      - Show this help message\n");
     vga_puts("  clear     - Clear the screen\n");
+    vga_puts("  dori      - Show system info (like fastfetch)\n");
     vga_puts("  meminfo   - Display memory information\n");
     vga_puts("  ver       - Show kernel version\n");
     vga_puts("  echo      - Echo text to screen\n");
@@ -83,6 +84,176 @@ static void cmd_ver(void) {
     vga_puts(" Kernel\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     vga_puts("  Built with love and caffeine.\n");
+}
+
+/* ─── dori: fastfetch-style sysinfo ───────────────────── */
+
+/* Print a key-value info line: "  KEY   value" */
+static void dori_field(const char* key, enum vga_color key_color,
+                       const char* value, enum vga_color val_color) {
+    vga_set_color(key_color, VGA_BLACK);
+    vga_puts(key);
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    vga_puts(": ");
+    vga_set_color(val_color, VGA_BLACK);
+    vga_puts(value);
+    vga_puts("\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+static void dori_field_dec(const char* key, enum vga_color key_color,
+                           uint32_t value, const char* suffix,
+                           enum vga_color val_color) {
+    vga_set_color(key_color, VGA_BLACK);
+    vga_puts(key);
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    vga_puts(": ");
+    vga_set_color(val_color, VGA_BLACK);
+    vga_put_dec(value);
+    vga_puts(suffix);
+    vga_puts("\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+static void cmd_dori(void) {
+    /*
+     *  ASCII art logo for "DORI" — rendered in cyan/light-cyan
+     *  Each row is printed, then the corresponding sysinfo field.
+     *
+     *   ██████╗  ██████╗ ██████╗ ██╗
+     *   ██╔══██╗██╔═══██╗██╔══██╗██║
+     *   ██║  ██║██║   ██║██████╔╝██║
+     *   ██║  ██║██║   ██║██╔══██╗██║
+     *   ██████╔╝╚██████╔╝██║  ██║██║
+     *   ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝
+     */
+
+    /* ── separator ── */
+    vga_set_color(VGA_DARK_GREY, VGA_BLACK);
+    vga_puts("\n");
+
+    /* Row 0 — logo line 1 */
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("  ██████╗  ██████╗ ██████╗ ██╗    ");
+    vga_set_color(VGA_CYAN, VGA_BLACK);
+    vga_puts("  ");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    vga_puts("monoos");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    vga_puts("@");
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    vga_puts("dori-kernel\n");
+
+    /* Row 1 — logo line 2 */
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("  ██╔══██╗██╔═══██╗██╔══██╗██║    ");
+    vga_set_color(VGA_DARK_GREY, VGA_BLACK);
+    vga_puts("  ─────────────────────────────\n");
+
+    /* Row 2 — logo line 3  +  OS */
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("  ██║  ██║██║   ██║██████╔╝██║    ");
+    dori_field("  OS    ", VGA_LIGHT_CYAN,
+               "MonoOS v" MONOOS_VERSION " (" KERNEL_NAME ")",
+               VGA_WHITE);
+
+    /* Row 3 — logo line 4  +  Kernel */
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("  ██║  ██║██║   ██║██╔══██╗██║    ");
+    dori_field("  Kernel", VGA_LIGHT_CYAN,
+               KERNEL_NAME " " MONOOS_VERSION " (i686)",
+               VGA_WHITE);
+
+    /* Row 4 — logo line 5  +  Shell */
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("  ██████╔╝╚██████╔╝██║  ██║██║    ");
+    dori_field("  Shell ", VGA_LIGHT_CYAN,
+               "dsh (Dori Shell)",
+               VGA_WHITE);
+
+    /* Row 5 — logo line 6  +  Arch */
+    vga_set_color(VGA_CYAN, VGA_BLACK);
+    vga_puts("  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝   ");
+    dori_field("  Arch  ", VGA_LIGHT_CYAN,
+               "i686 (x86 protected mode)",
+               VGA_WHITE);
+
+    /* blank  +  Memory */
+    vga_puts("                                   ");
+    {
+        uint32_t used_kb = pmm_get_used_block_count() * 4;
+        uint32_t total_kb = pmm_get_block_count() * 4;
+        uint32_t free_kb  = pmm_get_free_block_count() * 4;
+        (void)free_kb;
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        vga_puts("  Memory");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        vga_puts(": ");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        vga_put_dec(used_kb);
+        vga_puts(" KiB / ");
+        vga_put_dec(total_kb);
+        vga_puts(" KiB\n");
+    }
+
+    /* blank  +  Disk */
+    vga_puts("                                   ");
+    if (ata_is_present()) {
+        ata_drive_t drive = ata_get_drive_info();
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        vga_puts("  Disk  ");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        vga_puts(": ");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        vga_put_dec(drive.size_mb);
+        vga_puts(" MB (");
+        vga_puts(drive.model);
+        vga_puts(")\n");
+    } else {
+        dori_field("  Disk  ", VGA_LIGHT_CYAN, "No disk detected", VGA_DARK_GREY);
+    }
+
+    /* blank  +  Uptime */
+    vga_puts("                                   ");
+    {
+        uint32_t ticks   = pit_get_ticks();
+        uint32_t seconds = ticks / 1000;
+        uint32_t minutes = seconds / 60;
+        uint32_t hours   = minutes / 60;
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        vga_puts("  Uptime");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        vga_puts(": ");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        vga_put_dec(hours);
+        vga_puts("h ");
+        vga_put_dec(minutes % 60);
+        vga_puts("m ");
+        vga_put_dec(seconds % 60);
+        vga_puts("s\n");
+    }
+
+    /* color palette strip */
+    vga_puts("\n  ");
+    const enum vga_color palette[] = {
+        VGA_BLACK, VGA_RED, VGA_GREEN, VGA_BROWN,
+        VGA_BLUE,  VGA_MAGENTA, VGA_CYAN, VGA_LIGHT_GREY
+    };
+    for (int i = 0; i < 8; i++) {
+        vga_set_color(palette[i], palette[i]);
+        vga_puts("   ");
+    }
+    vga_puts("\n  ");
+    const enum vga_color palette2[] = {
+        VGA_DARK_GREY,  VGA_LIGHT_RED, VGA_LIGHT_GREEN, VGA_YELLOW,
+        VGA_LIGHT_BLUE, VGA_LIGHT_MAGENTA, VGA_LIGHT_CYAN, VGA_WHITE
+    };
+    for (int i = 0; i < 8; i++) {
+        vga_set_color(palette2[i], palette2[i]);
+        vga_puts("   ");
+    }
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    vga_puts("\n\n");
 }
 
 static void cmd_echo(const char* args) {
@@ -343,6 +514,8 @@ static void execute_command(const char* cmd) {
         cmd_echo("");
     } else if (strcmp(cmd, "uptime") == 0) {
         cmd_uptime();
+    } else if (strcmp(cmd, "dori") == 0) {
+        cmd_dori();
     } else if (strcmp(cmd, "reboot") == 0) {
         cmd_reboot();
     } else if (strcmp(cmd, "halt") == 0) {

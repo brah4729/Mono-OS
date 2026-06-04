@@ -166,10 +166,8 @@ static void draw_window(oki_window_t* win) {
     /* Client area — blit the surface */
     if (win->surface) {
         int client_y = total_y + ((win->flags & OKI_WIN_DECORATED) ? OKI_TITLEBAR_HEIGHT : 0);
-        uint32_t* target = fb_get_info().address;
+        uint32_t* target = backbuffer ? backbuffer : fb_get_info().address;
         /* Use backbuffer if available */
-        extern uint32_t* backbuffer;
-        if (backbuffer) target = backbuffer;
         uint32_t pitch4 = fb_get_info().pitch / 4;
 
         for (int sy = 0; sy < win->surface_h && sy < win->h; sy++) {
@@ -331,8 +329,6 @@ void oki_window_putchar(oki_window_t* win, int x, int y, char c, color_t fg) {
     if (!win || !win->surface) return;
     if (c < 32 || c > 126) c = '?';
 
-    /* Get font data — reaching into framebuffer's font */
-    extern const uint8_t font_8x16[95][16];
     const uint8_t* glyph = font_8x16[c - 32];
 
     for (int row = 0; row < 16; row++) {

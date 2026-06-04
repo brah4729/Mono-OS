@@ -97,7 +97,7 @@ static void print_banner(void) {
 static void init_memory(uint32_t mem_upper) {
     /* mem_upper is in KiB, starting at 1 MiB */
     uint32_t mem_size = (mem_upper + 1024) * 1024;
-
+    
     /* Place bitmap right after kernel */
     extern uint32_t _kernel_end;
     uint32_t* bitmap = (uint32_t*)((uint32_t)&_kernel_end);

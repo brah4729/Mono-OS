@@ -16,6 +16,5 @@ char*  strchr(const char* str, int c);
 char*  strstr(const char* haystack, const char* needle);
 void   itoa(int value, char* buf, int base);
 void   utoa(uint32_t value, char* buf, int base);
-int    snprintf_k(char* buf, size_t size, const char* fmt, ...);
 
 #endif
