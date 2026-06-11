@@ -36,19 +36,30 @@ KERNEL  = dori.kernel
 ISO     = monoos.iso
 DISKIMG = monoos-disk.img
 
+# ─── QEMU config ───────────────────────────────────────────
+# -vga std    → CRITICAL: exposes VESA-compatible adapter so
+#               GRUB can set gfxmode and Multiboot2 passes the
+#               framebuffer tag to the kernel. Without this,
+#               fb_is_available() returns false and Oki DE
+#               never starts.
+QEMU_BASE = qemu-system-i386 \
+              -m 128M \
+              -vga std \
+              -serial stdio
+
+QEMU_DISK = -drive file=$(DISKIMG),format=raw,if=ide
+
 # ─── Targets ───────────────────────────────────────────────
 
-.PHONY: all clean run iso disk libc userland
+.PHONY: all kernel clean run run-nodisk run-kernel debug iso disk libc userland
 
+# Full build (kernel + libc + userland)
 all: libc userland $(ISO)
 
-# Build monolibc (userspace C library)
-libc:
-	@$(MAKE) -C libc all
-
-# Build userland programs
-userland: libc
-	@$(MAKE) -C userland all
+# ── Kernel-only fast build (skips libc/userland) ──────────
+# Use this while iterating on oki.c / framebuffer / drivers.
+# Much faster: no userland compile step.
+kernel: $(ISO)
 
 $(ISO): $(KERNEL)
 	@mkdir -p iso/boot/grub
@@ -63,6 +74,14 @@ $(ISO): $(KERNEL)
 $(KERNEL): $(OBJECTS)
 	$(LD) $(LDFLAGS) -o $@ $^
 
+# Build monolibc (userspace C library)
+libc:
+	@$(MAKE) -C libc all
+
+# Build userland programs
+userland: libc
+	@$(MAKE) -C userland all
+
 # Assembly compilation
 %.o: %.asm
 	$(AS) $(ASFLAGS) $< -o $@
@@ -71,26 +90,33 @@ $(KERNEL): $(OBJECTS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Create a 64 MB disk image for QEMU
+# ─── Disk image ────────────────────────────────────────────
 disk: $(DISKIMG)
 
 $(DISKIMG):
 	dd if=/dev/zero of=$(DISKIMG) bs=1M count=64 2>/dev/null
 	@echo "Created $(DISKIMG) (64 MB)"
 
-# Run with disk attached
-run: $(ISO) $(DISKIMG)
-	qemu-system-i386 -cdrom $(ISO) -serial stdio -m 128M \
-		-drive file=$(DISKIMG),format=raw,if=ide
+# ─── QEMU run targets ──────────────────────────────────────
 
-# Run without disk (CD-ROM only)
+# Full run with disk (normal workflow)
+run: $(ISO)
+	$(QEMU_BASE) -cdrom $(ISO) $(QEMU_DISK)
+
+# Run without disk (faster, use when you don't need DoriFS)
 run-nodisk: $(ISO)
-	qemu-system-i386 -cdrom $(ISO) -serial stdio -m 128M
+	$(QEMU_BASE) -cdrom $(ISO)
 
-debug: $(ISO) $(DISKIMG)
-	qemu-system-i386 -cdrom $(ISO) -serial stdio -m 128M \
-		-drive file=$(DISKIMG),format=raw,if=ide -s -S
+# Kernel-only fast build + run (use this while working on Oki DE)
+# Skips libc/userland, builds kernel, launches QEMU immediately
+run-kernel: kernel
+	$(QEMU_BASE) -cdrom $(ISO)
 
+# GDB debug session (attach with: gdb dori.kernel → target remote :1234)
+debug: $(ISO)
+	$(QEMU_BASE) -cdrom $(ISO) $(QEMU_DISK) -s -S
+
+# ─── Cleanup ───────────────────────────────────────────────
 clean:
 	rm -f $(OBJECTS) $(KERNEL) $(ISO)
 	rm -f iso/boot/$(KERNEL)
@@ -101,4 +127,3 @@ clean:
 cleanall: clean
 	rm -f $(DISKIMG)
 	@echo "Cleaned everything (including disk image)."
-

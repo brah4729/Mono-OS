@@ -100,21 +100,6 @@ static void dori_field(const char* key, enum vga_color key_color,
     vga_puts("\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
-
-static void dori_field_dec(const char* key, enum vga_color key_color,
-                           uint32_t value, const char* suffix,
-                           enum vga_color val_color) {
-    vga_set_color(key_color, VGA_BLACK);
-    vga_puts(key);
-    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-    vga_puts(": ");
-    vga_set_color(val_color, VGA_BLACK);
-    vga_put_dec(value);
-    vga_puts(suffix);
-    vga_puts("\n");
-    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-}
-
 static void cmd_dori(void) {
     /*
      *  ASCII art logo for "DORI" — rendered in cyan/light-cyan
