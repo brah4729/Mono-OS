@@ -45,7 +45,8 @@ DISKIMG = monoos-disk.img
 QEMU_BASE = qemu-system-i386 \
               -m 128M \
               -vga std \
-              -serial stdio
+              -serial stdio \
+              -display sdl,grab-on-hover=on
 
 QEMU_DISK = -drive file=$(DISKIMG),format=raw,if=ide
 

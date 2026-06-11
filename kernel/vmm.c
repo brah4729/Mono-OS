@@ -85,25 +85,20 @@ void vmm_switch_directory(page_directory_t* dir) {
 }
 
 void vmm_init(void) {
-    /* Allocate page directory */
     uint32_t pd_phys = pmm_alloc_frame();
     current_directory = (page_directory_t*)pd_phys;
     memset(current_directory, 0, sizeof(page_directory_t));
-
-    /* Identity-map first 4 MiB (kernel space) */
-    for (uint32_t i = 0; i < 0x400000; i += PAGE_SIZE) {
+    for (uint32_t i = 0; i < 0x1000000; i += PAGE_SIZE) {
         vmm_map_page(i, i, PAGE_WRITABLE);
     }
-
-    /* Register page fault handler */
+    for (uint32_t i= 0; i < 0x400000; i += PAGE_SIZE){
+        vmm_map_page(0xfd000000 + i, 0xfd000000 + i, PAGE_WRITABLE);
+    }
     isr_register_handler(14, page_fault_handler);
-
-    /* Enable paging */
     vmm_switch_directory(current_directory);
     uint32_t cr0;
     __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
     cr0 |= 0x80000000;
     __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
-
-    serial_puts("[VMM] Paging enabled, first 4 MiB identity-mapped\n");
+    serial_puts("[VMM] Paging enabled, first 16 MiB identity-mapped + FB mapped\n");
 }

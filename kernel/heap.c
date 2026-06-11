@@ -16,28 +16,18 @@ static heap_block_t* heap_start = 0;
 static uint32_t      heap_end_addr = 0;
 
 /* Simple placement allocator used before the heap is set up */
-static uint32_t placement_addr = 0;
 
 void heap_init(void) {
-    extern uint32_t _kernel_end;
-    placement_addr = (uint32_t)&_kernel_end;
+    /* Initialize the heap with a single large free block */
+    heap_start = (heap_block_t*)HEAP_START;
+    heap_end_addr = HEAP_START + HEAP_INITIAL_SIZE;
 
-    /* Align to page boundary */
-    if (placement_addr & 0xFFF) {
-        placement_addr = (placement_addr & 0xFFFFF000) + PAGE_SIZE;
-    }
-
-    /* Use placement allocator for initial heap — we'll map pages for it */
-    heap_start = (heap_block_t*)placement_addr;
-    heap_end_addr = placement_addr + HEAP_INITIAL_SIZE;
-
-    /* Initialize the first free block */
     heap_start->size = HEAP_INITIAL_SIZE - sizeof(heap_block_t);
     heap_start->free = true;
     heap_start->next = NULL;
 
-    serial_puts("[HEAP] Initialized at 0x");
-    serial_put_hex(placement_addr);
+    serial_puts("[HEAP] Initialized heap at 0x");
+    serial_put_hex(HEAP_START);
     serial_puts(", size=");
     char buf[16];
     utoa(HEAP_INITIAL_SIZE / 1024, buf, 10);
