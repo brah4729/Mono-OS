@@ -26,6 +26,7 @@
           qemu
           gnumake
           coreutils
+          
         ];
 
         # Kernel build

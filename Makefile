@@ -43,10 +43,10 @@ DISKIMG = monoos-disk.img
 #               fb_is_available() returns false and Oki DE
 #               never starts.
 QEMU_BASE = qemu-system-i386 \
-              -m 128M \
+              -m 256M \
               -vga std \
               -serial stdio \
-              -display sdl,grab-on-hover=on
+			  
 
 QEMU_DISK = -drive file=$(DISKIMG),format=raw,if=ide
 

@@ -132,11 +132,19 @@ void mouse_irq_handler(void) {
     if (packet[0] & 0x40) return; /* X overflow */
     if (packet[0] & 0x80) return; /* Y overflow */
 
-    mouse.dx = dx;
+    /* Debug for now  */
+    serial_puts("[MOUSE] dx=");
+    serial_put_hex(dx);
+    serial_puts(" dy=");
+    serial_put_hex(dy);
+    serial_puts("\n");
+
+
+    mouse.dx = -dx;
     mouse.dy = -dy; /* PS/2 Y is inverted */
 
     /* Update position with clamping */
-    mouse.x += dx;
+    mouse.x -= dx;
     mouse.y -= dy; /* PS/2 Y is inverted */
 
     if (mouse.x < 0) mouse.x = 0;

@@ -7,6 +7,7 @@
 #include "../include/string.h"
 #include "../include/serial.h"
 #include "../include/pit.h"
+#include "../include/keyboard.h"
 
 static oki_desktop_t desktop;
 
@@ -561,14 +562,24 @@ void oki_run(void) {
 
     /* Initial compose */
     oki_compose();
+    uint32_t last_frame_tick = pit_get_ticks();
 
     while (desktop.running) {
-        if (desktop.needs_redraw) {
-            oki_compose();
-            desktop.needs_redraw = false;
+        /* ── Keyboard input (non-blocking) ── */
+        uint8_t sc = keyboard_get_scancode();
+        if (sc) {
+            oki_handle_key(sc);
         }
 
-        /* Small delay to avoid burning CPU */
-        for (volatile int i = 0; i < 10000; i++);
+        /* ── Frame rate cap: ~30 fps = redraw every 33ms ── */
+        uint32_t now = pit_get_ticks();
+        if (desktop.needs_redraw && (now - last_frame_tick) >= 33) {
+            oki_compose();
+            desktop.needs_redraw = false;
+            last_frame_tick = now;
+        }
+
+        /* ── Sleep until next interrupt instead of busy-spinning ── */
+        __asm__ volatile ("hlt");
     }
 }

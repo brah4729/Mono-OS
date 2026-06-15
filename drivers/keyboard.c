@@ -5,15 +5,28 @@
 #include "../include/io.h"
 #include "../include/serial.h"
 
-/* Circular buffer for keyboard input */
+/* ── ASCII buffer (for kshell blocking reads) ── */
 static char kb_buffer[KB_BUFFER_SIZE];
 static volatile uint32_t kb_buffer_head = 0;
 static volatile uint32_t kb_buffer_tail = 0;
 
+/* ── Raw scancode buffer (for Oki DE non-blocking reads) ── */  // ← ADD THIS BLOCK
+static uint8_t  sc_buffer[KB_BUFFER_SIZE];
+static volatile uint32_t sc_head = 0;
+static volatile uint32_t sc_tail = 0;
+
+static void sc_buffer_push(uint8_t sc) {
+    uint32_t next = (sc_head + 1) % KB_BUFFER_SIZE;
+    if (next != sc_tail) {
+        sc_buffer[sc_head] = sc;
+        sc_head = next;
+    }
+}
+
 /* Modifier key states */
 static bool shift_pressed = false;
-static bool caps_lock = false;
-static bool ctrl_pressed = false;
+static bool caps_lock     = false;
+static bool ctrl_pressed  = false;
 
 /* US QWERTY scancode-to-ASCII table (scancode set 1) */
 static const char scancode_ascii[] = {
@@ -54,6 +67,9 @@ static void keyboard_callback(registers_t* regs) {
         return;
     }
 
+    /* Push raw scancode for DE hotkeys (key press only) */  // ← ADD THIS
+    sc_buffer_push(scancode);
+
     /* Special keys */
     switch (scancode) {
         case 0x2A: case 0x36: shift_pressed = true; return;
@@ -72,7 +88,6 @@ static void keyboard_callback(registers_t* regs) {
         c = scancode_ascii[scancode];
     }
 
-    /* Caps lock only affects letters */
     if (caps_lock && !shift_pressed) {
         if (c >= 'a' && c <= 'z') c -= 32;
     } else if (caps_lock && shift_pressed) {
@@ -80,10 +95,9 @@ static void keyboard_callback(registers_t* regs) {
     }
 
     if (c != 0) {
-        /* Ctrl+C, Ctrl+D etc */
         if (ctrl_pressed) {
             if (c == 'c' || c == 'C') {
-                kb_buffer_push(3); /* ETX */
+                kb_buffer_push(3);
                 return;
             }
         }
@@ -94,6 +108,8 @@ static void keyboard_callback(registers_t* regs) {
 void keyboard_init(void) {
     kb_buffer_head = 0;
     kb_buffer_tail = 0;
+    sc_head        = 0;   // ← ADD
+    sc_tail        = 0;   // ← ADD
     irq_register_handler(1, keyboard_callback);
     serial_puts("[KB] PS/2 keyboard initialized\n");
 }
@@ -109,4 +125,12 @@ char keyboard_getchar(void) {
 
 bool keyboard_has_input(void) {
     return kb_buffer_tail != kb_buffer_head;
+}
+
+/* Non-blocking — returns 0 if no scancode waiting */   // ← ADD THIS FUNCTION
+uint8_t keyboard_get_scancode(void) {
+    if (sc_tail == sc_head) return 0;
+    uint8_t sc = sc_buffer[sc_tail];
+    sc_tail = (sc_tail + 1) % KB_BUFFER_SIZE;
+    return sc;
 }
