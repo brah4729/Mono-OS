@@ -46,7 +46,7 @@ QEMU_BASE = qemu-system-i386 \
               -m 256M \
               -vga std \
               -serial stdio \
-			  
+			  -display gtk
 
 QEMU_DISK = -drive file=$(DISKIMG),format=raw,if=ide
 
