@@ -10,10 +10,13 @@ static char kb_buffer[KB_BUFFER_SIZE];
 static volatile uint32_t kb_buffer_head = 0;
 static volatile uint32_t kb_buffer_tail = 0;
 
-/* ── Raw scancode buffer (for Oki DE non-blocking reads) ── */  // ← ADD THIS BLOCK
+/* ── Raw scancode buffer (for Oki DE non-blocking reads) ── */
 static uint8_t  sc_buffer[KB_BUFFER_SIZE];
 static volatile uint32_t sc_head = 0;
 static volatile uint32_t sc_tail = 0;
+
+/* Track which keys are currently held, to suppress PS/2 auto-repeat */
+static bool key_held[128] = {false};
 
 static void sc_buffer_push(uint8_t sc) {
     uint32_t next = (sc_head + 1) % KB_BUFFER_SIZE;
@@ -59,16 +62,23 @@ static void keyboard_callback(registers_t* regs) {
     (void)regs;
     uint8_t scancode = inb(KB_DATA_PORT);
 
+    /* Push raw scancode for DE hotkeys (press AND release, so DE can track key-up) */
+    sc_buffer_push(scancode);
+
     /* Key release (bit 7 set) */
     if (scancode & 0x80) {
         uint8_t released = scancode & 0x7F;
+        if (released < 128) key_held[released] = false;   /* allow this key to repeat next press */
         if (released == 0x2A || released == 0x36) shift_pressed = false;
         if (released == 0x1D) ctrl_pressed = false;
         return;
     }
 
-    /* Push raw scancode for DE hotkeys (key press only) */  // ← ADD THIS
-    sc_buffer_push(scancode);
+    /* Suppress PS/2 auto-repeat — only process the FIRST press, ignore repeats while held */
+    if (scancode < 128) {
+        if (key_held[scancode]) return;
+        key_held[scancode] = true;
+    }
 
     /* Special keys */
     switch (scancode) {
@@ -108,8 +118,8 @@ static void keyboard_callback(registers_t* regs) {
 void keyboard_init(void) {
     kb_buffer_head = 0;
     kb_buffer_tail = 0;
-    sc_head        = 0;   // ← ADD
-    sc_tail        = 0;   // ← ADD
+    sc_head        = 0;
+    sc_tail        = 0;
     irq_register_handler(1, keyboard_callback);
     serial_puts("[KB] PS/2 keyboard initialized\n");
 }
@@ -123,11 +133,19 @@ char keyboard_getchar(void) {
     return c;
 }
 
+/* Non-blocking ASCII char read — for terminal input in Oki DE */
+char keyboard_get_char(void) {
+    if (kb_buffer_tail == kb_buffer_head) return 0;
+    char c = kb_buffer[kb_buffer_tail];
+    kb_buffer_tail = (kb_buffer_tail + 1) % KB_BUFFER_SIZE;
+    return c;
+}
+
 bool keyboard_has_input(void) {
     return kb_buffer_tail != kb_buffer_head;
 }
 
-/* Non-blocking — returns 0 if no scancode waiting */   // ← ADD THIS FUNCTION
+/* Non-blocking — returns 0 if no scancode waiting */
 uint8_t keyboard_get_scancode(void) {
     if (sc_tail == sc_head) return 0;
     uint8_t sc = sc_buffer[sc_tail];

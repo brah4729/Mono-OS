@@ -543,7 +543,7 @@ void kshell_run(void) {
     memset(cmd_buffer, 0, CMD_BUFFER_SIZE);
 
     while (1) {
-        char c = keyboard_getchar();
+        char c = keyboard_get_char();
 
         if (c == '\n') {
             vga_putchar('\n');

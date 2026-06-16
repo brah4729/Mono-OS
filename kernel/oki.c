@@ -8,9 +8,31 @@
 #include "../include/serial.h"
 #include "../include/pit.h"
 #include "../include/keyboard.h"
+#include "../include/pmm.h"
+#include "../include/vfs.h"
 
 static oki_desktop_t desktop;
 
+/* ─── Terminal state ────────────────────────────────────── */
+
+#define TERM_COLS      58   /* (500 - 16px padding) / 8px per char */
+#define TERM_ROWS      18   /* lines of output history */
+#define TERM_PAD_X     8
+#define TERM_PAD_Y     8
+#define TERM_LINE_H    16
+#define TERM_CHAR_W    8
+#define TERM_INPUT_MAX 50
+
+typedef struct {
+    char    lines[TERM_ROWS][TERM_COLS + 1];
+    color_t colors[TERM_ROWS];
+    int     line_count;
+    char    input[TERM_INPUT_MAX + 1];
+    int     input_len;
+    oki_window_t* win;
+} oki_term_t;
+
+static oki_term_t g_term;
 /* ─── Wallpaper rendering ───────────────────────────────── */
 
 static color_t lerp_color(color_t a, color_t b, int t, int max) {
@@ -33,6 +55,24 @@ static void draw_wallpaper(void) {
 }
 
 /* ─── Panel rendering (Waybar-inspired) ─────────────────── */
+
+/* Draw one rounded "pill" module, right-aligned against *cursor_x.
+ * Advances *cursor_x left by the pill's width plus a gap, so the caller
+ * can chain multiple pills right-to-left without tracking offsets by hand. */
+static void draw_pill_module(int* cursor_x, int py, const char* text,
+                              color_t bg, color_t fg) {
+    const int pad_x  = 10;
+    const int pill_h = OKI_PANEL_HEIGHT - 8;   /* 4px margin top + bottom */
+    int pill_y = py + 4;
+    int text_w = fb_text_width(text);
+    int pill_w = text_w + pad_x * 2;
+    int pill_x = *cursor_x - pill_w;
+
+    fb_fill_rounded_rect(pill_x, pill_y, pill_w, pill_h, pill_h / 2, bg);
+    fb_puts_transparent(pill_x + pad_x, pill_y + (pill_h - FONT_HEIGHT) / 2, text, fg);
+
+    *cursor_x = pill_x - OKI_GAP;
+}
 
 static void draw_panel(void) {
     if (!desktop.panel_visible) return;
@@ -84,24 +124,50 @@ static void draw_panel(void) {
         }
     }
 
-    /* Right: clock + status */
-    uint32_t uptime = pit_get_ticks() / 1000; /* seconds */
-    uint32_t hours = uptime / 3600;
-    uint32_t minutes = (uptime % 3600) / 60;
+    /* Right: stat pills — RAM, uptime, clock (Waybar-style) */
+    int cursor = pw - OKI_GAP;
 
-    char clock[16];
-    clock[0] = '0' + (hours / 10);
-    clock[1] = '0' + (hours % 10);
-    clock[2] = ':';
-    clock[3] = '0' + (minutes / 10);
-    clock[4] = '0' + (minutes % 10);
-    clock[5] = '\0';
+    uint32_t total_secs = pit_get_ticks() / 1000;
+    uint32_t hours   = (total_secs / 3600) % 24;
+    uint32_t minutes = (total_secs % 3600) / 60;
 
-    int clock_w = fb_text_width(clock);
-    fb_puts_transparent(pw - clock_w - 12, py + 8, clock, COLOR_SUBTEXT);
+    char clock_buf[8];
+    clock_buf[0] = '0' + (hours / 10);
+    clock_buf[1] = '0' + (hours % 10);
+    clock_buf[2] = ':';
+    clock_buf[3] = '0' + (minutes / 10);
+    clock_buf[4] = '0' + (minutes % 10);
+    clock_buf[5] = '\0';
+    draw_pill_module(&cursor, py, clock_buf, COLOR_PILL_BG_ACCENT, COLOR_PILL_TEXT);
 
-    /* Separator dots */
-    fb_fill_circle(pw - clock_w - 28, py + ph/2, 3, COLOR_GREEN);
+    /* Uptime — same underlying ticks as the clock above, since there's no
+     * RTC driver yet; shown as elapsed Hh Mm rather than a wall-clock time. */
+    uint32_t up_hours   = total_secs / 3600;
+    uint32_t up_minutes = (total_secs % 3600) / 60;
+    char up_buf[24];
+    char num[12];
+    strcpy(up_buf, "UP ");
+    utoa(up_hours, num, 10);
+    strcat(up_buf, num);
+    strcat(up_buf, "h");
+    if (up_minutes < 10) strcat(up_buf, "0");
+    utoa(up_minutes, num, 10);
+    strcat(up_buf, num);
+    strcat(up_buf, "m");
+    draw_pill_module(&cursor, py, up_buf, COLOR_PILL_BG, COLOR_PILL_TEXT);
+
+    /* RAM — used/total in MiB, from the PMM bitmap allocator */
+    uint32_t used_mib  = (pmm_get_used_block_count() * 4) / 1024;
+    uint32_t total_mib = (pmm_get_block_count() * 4) / 1024;
+    char ram_buf[24];
+    strcpy(ram_buf, "RAM ");
+    utoa(used_mib, num, 10);
+    strcat(ram_buf, num);
+    strcat(ram_buf, "/");
+    utoa(total_mib, num, 10);
+    strcat(ram_buf, num);
+    strcat(ram_buf, "MB");
+    draw_pill_module(&cursor, py, ram_buf, COLOR_PILL_BG, COLOR_PILL_TEXT);
 }
 
 /* ─── Window rendering ──────────────────────────────────── */
@@ -182,7 +248,200 @@ static void draw_window(oki_window_t* win) {
         }
     }
 }
+/* ─── Terminal functions ────────────────────────────────── */
 
+static void term_scroll_up(void) {
+    for (int i = 0; i < TERM_ROWS - 1; i++) {
+        strcpy(g_term.lines[i], g_term.lines[i + 1]);
+        g_term.colors[i] = g_term.colors[i + 1];
+    }
+    g_term.lines[TERM_ROWS - 1][0] = '\0';
+    g_term.line_count = TERM_ROWS - 1;
+}
+
+static void term_println(const char* str, color_t color) {
+    if (g_term.line_count >= TERM_ROWS) {
+        term_scroll_up();
+    }
+    strncpy(g_term.lines[g_term.line_count], str, TERM_COLS);
+    g_term.lines[g_term.line_count][TERM_COLS] = '\0';
+    g_term.colors[g_term.line_count] = color;
+    g_term.line_count++;
+}
+
+static void term_clear(void) {
+    for (int i = 0; i < TERM_ROWS; i++) {
+        g_term.lines[i][0] = '\0';
+        g_term.colors[i] = COLOR_TEXT;
+    }
+    g_term.line_count = 0;
+}
+
+/* Build "prefix + decimal + suffix" into buf */
+static void term_fmt(char* buf, const char* prefix, uint32_t val, const char* suffix) {
+    char num[16];
+    utoa(val, num, 10);
+    strcpy(buf, prefix);
+    strcat(buf, num);
+    strcat(buf, suffix);
+}
+
+static void term_render(void) {
+    oki_window_t* win = g_term.win;
+    if (!win || !win->surface) return;
+
+    oki_window_clear(win, COLOR_BG);
+
+    /* Output lines */
+    for (int i = 0; i < g_term.line_count; i++) {
+        int y = TERM_PAD_Y + i * TERM_LINE_H;
+        if (y + TERM_LINE_H > win->surface_h) break;
+        if (g_term.lines[i][0] != '\0') {
+            oki_window_puts(win, TERM_PAD_X, y, g_term.lines[i], g_term.colors[i]);
+        }
+    }
+
+    /* Prompt line at bottom */
+    int prompt_y = TERM_PAD_Y + TERM_ROWS * TERM_LINE_H;
+    if (prompt_y + TERM_LINE_H <= win->surface_h) {
+        const char* prompt = "$ dori> ";
+        int prompt_w = 8 * TERM_CHAR_W;
+
+        oki_window_puts(win, TERM_PAD_X, prompt_y, prompt, COLOR_GREEN);
+
+        if (g_term.input_len > 0) {
+            oki_window_puts(win, TERM_PAD_X + prompt_w, prompt_y,
+                            g_term.input, COLOR_TEXT);
+        }
+
+        /* Underline cursor */
+        int cx = TERM_PAD_X + prompt_w + g_term.input_len * TERM_CHAR_W;
+        oki_window_fill_rect(win, cx, prompt_y + 14, TERM_CHAR_W - 1, 2, COLOR_MAUVE);
+    }
+
+    desktop.needs_redraw = true;
+}
+
+static void term_execute(const char* cmd) {
+    /* Echo command with prompt */
+    char echo[TERM_COLS + 1];
+    strcpy(echo, "$ dori> ");
+    strcat(echo, cmd);
+    term_println(echo, COLOR_GREEN);
+
+    /* Dispatch */
+    if (strcmp(cmd, "") == 0) {
+        /* empty — just reprint prompt */
+    } else if (strcmp(cmd, "help") == 0) {
+        term_println("Commands:", COLOR_MAUVE);
+        term_println("  help    - show this help", COLOR_TEXT);
+        term_println("  ver     - kernel version", COLOR_TEXT);
+        term_println("  meminfo - memory usage", COLOR_TEXT);
+        term_println("  uptime  - system uptime", COLOR_TEXT);
+        term_println("  ls      - list root dir", COLOR_TEXT);
+        term_println("  dori    - system info", COLOR_TEXT);
+        term_println("  clear   - clear terminal", COLOR_TEXT);
+
+    } else if (strcmp(cmd, "clear") == 0) {
+        term_clear();
+
+    } else if (strcmp(cmd, "ver") == 0) {
+        term_println("MonoOS v0.2.0 - Dori Kernel", COLOR_YELLOW);
+        term_println("Arch: i686 (x86 protected mode)", COLOR_SUBTEXT);
+        term_println("Built with , suffering and caffeine.", COLOR_SUBTEXT);
+
+    } else if (strcmp(cmd, "meminfo") == 0) {
+        char buf[TERM_COLS + 1];
+        term_println("Memory Information:", COLOR_MAUVE);
+        term_fmt(buf, "  Total:  ", pmm_get_block_count() * 4, " KiB");
+        term_println(buf, COLOR_TEXT);
+        term_fmt(buf, "  Used:   ", pmm_get_used_block_count() * 4, " KiB");
+        term_println(buf, COLOR_YELLOW);
+        term_fmt(buf, "  Free:   ", pmm_get_free_block_count() * 4, " KiB");
+        term_println(buf, COLOR_GREEN);
+
+    } else if (strcmp(cmd, "uptime") == 0) {
+        uint32_t ticks = pit_get_ticks();
+        uint32_t secs  = ticks / 1000;
+        uint32_t mins  = secs / 60;
+        uint32_t hrs   = mins / 60;
+        char buf[TERM_COLS + 1];
+        char tmp[8];
+        term_fmt(buf, "  Uptime: ", hrs, "h ");
+        utoa(mins % 60, tmp, 10); strcat(buf, tmp); strcat(buf, "m ");
+        utoa(secs % 60, tmp, 10); strcat(buf, tmp); strcat(buf, "s");
+        term_println(buf, COLOR_TEXT);
+
+    } else if (strcmp(cmd, "ls") == 0) {
+        vfs_dirent_t entry;
+        uint32_t idx = 0;
+        term_println("  /", COLOR_MAUVE);
+        while (vfs_readdir("/", idx, &entry) == 0) {
+            char line[TERM_COLS + 1];
+            if (entry.type == 2) {
+                strcpy(line, "  [DIR] ");
+            } else {
+                strcpy(line, "        ");
+            }
+            strcat(line, entry.name);
+            term_println(line, entry.type == 2 ? COLOR_LAVENDER : COLOR_TEXT);
+            idx++;
+        }
+        if (idx == 0) term_println("  (empty)", COLOR_SUBTEXT);
+
+    } else if (strcmp(cmd, "dori") == 0) {
+        char buf[TERM_COLS + 1];
+        term_println("MonoOS 0.2.0 (Dori)", COLOR_MAUVE);
+        term_println("  Kernel:  Dori v0.2 (i686)", COLOR_TEXT);
+        term_println("  Desktop: Oki v0.1", COLOR_TEXT);
+        term_println("  Shell:   dsh 1.0", COLOR_TEXT);
+        term_println("  Video:   VESA FB 1024x768x32", COLOR_TEXT);
+        term_fmt(buf, "  Memory: ", pmm_get_used_block_count() * 4, " / ");
+        char tmp[16];
+        utoa(pmm_get_block_count() * 4, tmp, 10);
+        strcat(buf, tmp); strcat(buf, " KiB");
+        term_println(buf, COLOR_SUBTEXT);
+
+    } else {
+        char buf[TERM_COLS + 1];
+        strcpy(buf, "Unknown command: ");
+        strcat(buf, cmd);
+        term_println(buf, COLOR_RED);
+        term_println("Type 'help' for commands.", COLOR_SUBTEXT);
+    }
+
+    term_render();
+}
+
+void oki_handle_char(char c) {
+    /* Only send to terminal if its window is focused */
+    if (desktop.focused_window < 0) return;
+    if (desktop.windows[desktop.focused_window] != g_term.win) return;
+    if (!g_term.win) return;
+
+    if (c == '\n') {
+        g_term.input[g_term.input_len] = '\0';
+        term_execute(g_term.input);
+        g_term.input_len = 0;
+        g_term.input[0] = '\0';
+        term_render();
+    } else if (c == '\b') {
+        if (g_term.input_len > 0) {
+            g_term.input[--g_term.input_len] = '\0';
+            term_render();
+        }
+    } else if (c == 3) {
+        /* Ctrl+C */
+        g_term.input_len = 0;
+        g_term.input[0] = '\0';
+        term_println("^C", COLOR_RED);
+        term_render();
+    } else if (c >= 32 && c < 127 && g_term.input_len < TERM_INPUT_MAX) {
+        g_term.input[g_term.input_len++] = c;
+        g_term.input[g_term.input_len]   = '\0';
+        term_render();
+    }
+}
 /* ─── Compositor ────────────────────────────────────────── */
 
 void oki_compose(void) {
@@ -504,19 +763,17 @@ void oki_init(void) {
         OKI_GAP, OKI_PANEL_HEIGHT + OKI_GAP,
         500, 350,
         OKI_WIN_DECORATED | OKI_WIN_MOVABLE | OKI_WIN_RESIZABLE);
+if (term) {
+        /* Initialize terminal state */
+        memset(&g_term, 0, sizeof(g_term));
+        g_term.win = term;
 
-    if (term) {
-        oki_window_clear(term, COLOR_BG);
-        oki_window_puts(term, 8, 8,
-            "Welcome to MonoOS!", COLOR_MAUVE);
-        oki_window_puts(term, 8, 28,
-            "Oki Desktop Environment v0.1", COLOR_SUBTEXT);
-        oki_window_puts(term, 8, 48,
-            "-----------------------------------", COLOR_SURFACE1);
-        oki_window_puts(term, 8, 72,
-            "$ dori>_", COLOR_GREEN);
+        term_println("Welcome to MonoOS!", COLOR_MAUVE);
+        term_println("Oki Desktop Environment v0.1", COLOR_SUBTEXT);
+        term_println("Type 'help' for commands.", COLOR_OVERLAY0);
+        term_println("", COLOR_TEXT);
+        term_render();
     }
-
     /* Create a system info window */
     oki_window_t* sysinfo = oki_create_window("System Info",
         520 + OKI_GAP, OKI_PANEL_HEIGHT + OKI_GAP,
@@ -570,7 +827,8 @@ void oki_run(void) {
         if (sc) {
             oki_handle_key(sc);
         }
-
+         char ch = keyboard_get_char();
+        if (ch) oki_handle_char(ch);
         /* ── Frame rate cap: ~30 fps = redraw every 33ms ── */
         uint32_t now = pit_get_ticks();
         if (desktop.needs_redraw && (now - last_frame_tick) >= 33) {

@@ -50,6 +50,11 @@ typedef uint32_t color_t;
 #define COLOR_TITLEBAR        0xFF1E1E2E
 #define COLOR_PANEL           0xE0181825  /* Semi-transparent panel */
 
+/* Taskbar "pill" module colors — sampled from a waybar reference screenshot */
+#define COLOR_PILL_BG          0xFF30343F  /* Standard module pill (RAM, uptime, ...) */
+#define COLOR_PILL_BG_ACCENT   0xFF3C4250  /* Accent pill — used for the rightmost/clock module */
+#define COLOR_PILL_TEXT        0xFFEBEEF7  /* Pill label/value text */
+
 /* Externally accessible globals (for compositor use) */
 extern uint32_t* backbuffer;
 extern const uint8_t font_8x16[95][16];
